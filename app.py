@@ -8,36 +8,72 @@ from datetime import timedelta
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut
 import time
+import json
+import os
 
 # ---------- Setup ----------
 st.set_page_config(layout="wide")
 st.title("🛫 Summer Vacation 2025")
 
 # ---------- Sample Data ----------
-df= pd.read_excel('data/data.xlsx', sheet_name='Sheet1')
-
+df = pd.read_excel('data/data.xlsx', sheet_name='Sheet1')
 df = df[df['route_type'] == 'outbound']
 df['flight_id'] = df.index.astype(str)
 df["departure_datetime"] = pd.to_datetime(df["departure_date"].astype(str) + " " + df["departure_time"].astype(str))
 df["arrival_datetime"] = pd.to_datetime(df["arrival_date"].astype(str) + " " + df["arrival_time"].astype(str))
+df['price'] = pd.to_numeric(df['price'], errors='coerce')
+
+CITY_COORDS = {
+    "Bratislava": (48.1486, 17.1077),
+    "Budapest": (47.4979, 19.0402),
+    "Chelm": (51.1431, 23.4715),
+    "Chop": (48.4265, 22.2033),
+    "Katowice": (50.2649, 19.0238),
+    "Krakow": (50.0647, 19.9450),
+    "Kyiv": (50.4501, 30.5234),
+    "Lublin": (51.2465, 22.5684),
+    "Poznan": (52.4064, 16.9252),
+    "Warsaw": (52.2297, 21.0122),
+    "Wroclaw": (51.1079, 17.0385),
+    "Chisinau": (47.0105, 28.8638),
+}
 
 # ---------- Geocoding ----------
-@st.cache_data(show_spinner=False)
+# @st.cache_data(show_spinner=False)
+# def get_coordinates(city):
+#     geolocator = Nominatim(user_agent="flight-path-app")
+#     try:
+#         location = geolocator.geocode(city, timeout=10)
+#         if location:
+#             return (location.latitude, location.longitude)
+#     except GeocoderTimedOut:
+#         time.sleep(1)
+#         return get_coordinates(city)
+#     return None
 def get_coordinates(city):
-    geolocator = Nominatim(user_agent="flight-path-app")
-    try:
-        location = geolocator.geocode(city, timeout=10)
-        if location:
-            return (location.latitude, location.longitude)
-    except GeocoderTimedOut:
-        time.sleep(1)
-        return get_coordinates(city)
-    return None
+    return CITY_COORDS.get(city, (None, None))
 
-@st.cache_data
 def build_city_coordinates(df):
+    coord_path = "data/city_coords.json"
+    if os.path.exists(coord_path):
+        with open(coord_path, "r", encoding="utf-8") as f:
+            city_coords = json.load(f)
+    else:
+        city_coords = {}
+
     cities = pd.unique(df[['departure_city', 'arrival_city']].values.ravel())
-    return {city: get_coordinates(city) for city in cities}
+    updated = False
+    for city in cities:
+        if city not in city_coords or city_coords[city] is None:
+            coords = get_coordinates(city)
+            if coords:
+                city_coords[city] = coords
+                updated = True
+    if updated:
+        with open(coord_path, "w", encoding="utf-8") as f:
+            json.dump(city_coords, f)
+
+    return city_coords
 
 city_coords = build_city_coordinates(df)
 
@@ -68,12 +104,16 @@ def find_paths(df, G, start_city, end_city):
 # ---------- Render Map & Table ----------
 def render_path(path_ids, G, city_coords):
     m = folium.Map(location=[47, 24], zoom_start=5, tiles="CartoDB positron")
-
     rows = []
     total_price = 0
 
-    for fid in path_ids:
-        node = G.nodes[fid]
+    nodes = [G.nodes[fid] for fid in path_ids]
+    transfer_times = [
+        nodes[i + 1]['departure_datetime'] - nodes[i]['arrival_datetime']
+        for i in range(len(nodes) - 1)
+    ] + [""]
+
+    for idx, node in enumerate(nodes):
         dep_city = node['departure_city']
         arr_city = node['arrival_city']
         dep_coords = city_coords.get(dep_city)
@@ -92,6 +132,7 @@ def render_path(path_ids, G, city_coords):
                 tooltip=f"To: {arr_city}",
                 icon=folium.Icon(color='green', icon='plane-arrival', prefix='fa')
             ).add_to(m)
+
         if dep_coords and arr_coords:
             PolyLine(
                 [dep_coords, arr_coords],
@@ -108,7 +149,8 @@ def render_path(path_ids, G, city_coords):
             "Arrival Place": node.get('arrival_place', ''),
             "Transport": node.get('transport_type', ''),
             "Company": node.get('company', ''),
-            "Price (UAH)": node['price']
+            "Price (UAH)": node['price'],
+            "Transfer Time": transfer_times[idx]
         })
 
         total_price += node['price']
