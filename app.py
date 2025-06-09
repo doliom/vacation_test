@@ -1,12 +1,7 @@
 import pandas as pd
 import networkx as nx
-import folium
-from folium import PolyLine
-from streamlit_folium import st_folium
 import streamlit as st
 from datetime import timedelta
-import json
-import os
 
 # ---------- Setup ----------
 st.set_page_config(layout="wide")
@@ -19,62 +14,6 @@ df['flight_id'] = df.index.astype(str)
 df["departure_datetime"] = pd.to_datetime(df["departure_date"].astype(str) + " " + df["departure_time"].astype(str))
 df["arrival_datetime"] = pd.to_datetime(df["arrival_date"].astype(str) + " " + df["arrival_time"].astype(str))
 df['price'] = pd.to_numeric(df['price'], errors='coerce')
-
-# ---------- Static Coordinates ----------
-CITY_COORDS = {
-    "Antalya": (36.8969, 30.7133),
-    "Bratislava": (48.1486, 17.1077),
-    "Budapest": (47.4979, 19.0402),
-    "Chelm": (51.1431, 23.4715),
-    "Chisinau": (47.0105, 28.8638),
-    "Chop": (48.4265, 22.2033),
-    "Corfu": (39.6243, 19.9217),
-    "Istanbul": (41.0082, 28.9784),
-    "Katowice": (50.2649, 19.0238),
-    "Krakow": (50.0647, 19.9450),
-    "Kyiv": (50.4501, 30.5234),
-    "Lublin": (51.2465, 22.5684),
-    "Poznan": (52.4064, 16.9252),
-    "Tirana": (41.3275, 19.8189),
-    "Warsaw": (52.2297, 21.0122),
-    "Wroclaw": (51.1079, 17.0385),
-}
-
-# ---------- Coordinates Loader ----------
-def get_coordinates(city):
-    return CITY_COORDS.get(city, (None, None))
-
-def build_city_coordinates(df):
-    coord_path = "data/city_coords.json"
-    if os.path.exists(coord_path):
-        with open(coord_path, "r", encoding="utf-8") as f:
-            city_coords = json.load(f)
-    else:
-        city_coords = {}
-
-    cities = pd.unique(df[['departure_city', 'arrival_city']].values.ravel())
-    updated = False
-    for city in cities:
-        if city not in city_coords or city_coords[city] is None:
-            coords = get_coordinates(city)
-            if coords:
-                city_coords[city] = coords
-                updated = True
-    if updated:
-        with open(coord_path, "w", encoding="utf-8") as f:
-            json.dump(city_coords, f)
-
-    return city_coords
-
-city_coords = build_city_coordinates(df)
-
-# ---------- Valid Coord Checker ----------
-def is_valid_coords(coords):
-    return (
-        isinstance(coords, (list, tuple))
-        and len(coords) == 2
-        and all(isinstance(c, (float, int)) and c is not None for c in coords)
-    )
 
 # ---------- Graph Builder ----------
 def build_graph(df, min_transfer, max_transfer):
@@ -100,9 +39,8 @@ def find_paths(df, G, start_city, end_city):
                 paths.append(path)
     return paths
 
-# ---------- Render Path ----------
-def render_path(path_ids, G, city_coords):
-    m = folium.Map(location=[47, 24], zoom_start=5, tiles="CartoDB positron")
+# ---------- Table Renderer ----------
+def render_path_table(path_ids, G):
     rows = []
     total_price = 0
 
@@ -113,37 +51,11 @@ def render_path(path_ids, G, city_coords):
     ] + [""]
 
     for idx, node in enumerate(nodes):
-        dep_city = node['departure_city']
-        arr_city = node['arrival_city']
-        dep_coords = city_coords.get(dep_city, (None, None))
-        arr_coords = city_coords.get(arr_city, (None, None))
-
-        if is_valid_coords(dep_coords):
-            folium.Marker(
-                location=dep_coords,
-                tooltip=f"From: {dep_city}",
-                icon=folium.Icon(color='blue', icon='plane-departure', prefix='fa')
-            ).add_to(m)
-
-        if is_valid_coords(arr_coords):
-            folium.Marker(
-                location=arr_coords,
-                tooltip=f"To: {arr_city}",
-                icon=folium.Icon(color='green', icon='plane-arrival', prefix='fa')
-            ).add_to(m)
-
-        if is_valid_coords(dep_coords) and is_valid_coords(arr_coords):
-            PolyLine(
-                [dep_coords, arr_coords],
-                color="blue", weight=3, opacity=0.8,
-                tooltip=f"{node['price']} UAH"
-            ).add_to(m)
-
         rows.append({
-            "From": dep_city,
+            "From": node['departure_city'],
             "Departure": node['departure_datetime'],
             "Departure Place": node.get('departure_place', ''),
-            "To": arr_city,
+            "To": node['arrival_city'],
             "Arrival": node['arrival_datetime'],
             "Arrival Place": node.get('arrival_place', ''),
             "Transport": node.get('transport_type', ''),
@@ -151,14 +63,13 @@ def render_path(path_ids, G, city_coords):
             "Price (UAH)": node['price'],
             "Transfer Time": transfer_times[idx]
         })
-
         total_price += node['price']
 
     df_table = pd.DataFrame(rows)
     total_row = {col: "" for col in df_table.columns}
     total_row["Price (UAH)"] = total_price
     df_table.loc[len(df_table.index)] = total_row
-    return m, df_table
+    return df_table
 
 # ---------- Sidebar UI ----------
 with st.sidebar:
@@ -189,9 +100,7 @@ else:
             st.session_state.path_index = (st.session_state.path_index + 1) % len(paths)
 
     idx = st.session_state.path_index
-
-    m, df_table = render_path(paths[int(idx)], G, city_coords)
+    df_table = render_path_table(paths[int(idx)], G)
 
     st.subheader(f"Path {idx + 1} of {len(paths)}")
-    st_folium(m, use_container_width=True, height=600)
     st.dataframe(df_table, use_container_width=True)
