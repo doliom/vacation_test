@@ -24,18 +24,22 @@ df["arrival_datetime"] = pd.to_datetime(df["arrival_date"].astype(str) + " " + d
 df['price'] = pd.to_numeric(df['price'], errors='coerce')
 
 CITY_COORDS = {
+    "Antalya": (36.8969, 30.7133),
     "Bratislava": (48.1486, 17.1077),
     "Budapest": (47.4979, 19.0402),
     "Chelm": (51.1431, 23.4715),
+    "Chisinau": (47.0105, 28.8638),
     "Chop": (48.4265, 22.2033),
+    "Corfu": (39.6243, 19.9217), 
+    "Istanbul": (41.0082, 28.9784),
     "Katowice": (50.2649, 19.0238),
     "Krakow": (50.0647, 19.9450),
     "Kyiv": (50.4501, 30.5234),
     "Lublin": (51.2465, 22.5684),
     "Poznan": (52.4064, 16.9252),
+    "Tirana": (41.3275, 19.8189),
     "Warsaw": (52.2297, 21.0122),
     "Wroclaw": (51.1079, 17.0385),
-    "Chisinau": (47.0105, 28.8638),
 }
 
 # ---------- Geocoding ----------
