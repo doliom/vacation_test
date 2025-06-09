@@ -1,13 +1,10 @@
 import pandas as pd
 import networkx as nx
 import folium
-from folium import PolyLine, Marker
+from folium import PolyLine
 from streamlit_folium import st_folium
 import streamlit as st
 from datetime import timedelta
-from geopy.geocoders import Nominatim
-from geopy.exc import GeocoderTimedOut
-import time
 import json
 import os
 
@@ -23,6 +20,7 @@ df["departure_datetime"] = pd.to_datetime(df["departure_date"].astype(str) + " "
 df["arrival_datetime"] = pd.to_datetime(df["arrival_date"].astype(str) + " " + df["arrival_time"].astype(str))
 df['price'] = pd.to_numeric(df['price'], errors='coerce')
 
+# ---------- Static Coordinates ----------
 CITY_COORDS = {
     "Antalya": (36.8969, 30.7133),
     "Bratislava": (48.1486, 17.1077),
@@ -30,7 +28,7 @@ CITY_COORDS = {
     "Chelm": (51.1431, 23.4715),
     "Chisinau": (47.0105, 28.8638),
     "Chop": (48.4265, 22.2033),
-    "Corfu": (39.6243, 19.9217), 
+    "Corfu": (39.6243, 19.9217),
     "Istanbul": (41.0082, 28.9784),
     "Katowice": (50.2649, 19.0238),
     "Krakow": (50.0647, 19.9450),
@@ -42,18 +40,7 @@ CITY_COORDS = {
     "Wroclaw": (51.1079, 17.0385),
 }
 
-# ---------- Geocoding ----------
-# @st.cache_data(show_spinner=False)
-# def get_coordinates(city):
-#     geolocator = Nominatim(user_agent="flight-path-app")
-#     try:
-#         location = geolocator.geocode(city, timeout=10)
-#         if location:
-#             return (location.latitude, location.longitude)
-#     except GeocoderTimedOut:
-#         time.sleep(1)
-#         return get_coordinates(city)
-#     return None
+# ---------- Coordinates Loader ----------
 def get_coordinates(city):
     return CITY_COORDS.get(city, (None, None))
 
@@ -81,6 +68,14 @@ def build_city_coordinates(df):
 
 city_coords = build_city_coordinates(df)
 
+# ---------- Valid Coord Checker ----------
+def is_valid_coords(coords):
+    return (
+        isinstance(coords, (list, tuple))
+        and len(coords) == 2
+        and all(isinstance(c, (float, int)) and c is not None for c in coords)
+    )
+
 # ---------- Graph Builder ----------
 def build_graph(df, min_transfer, max_transfer):
     G = nx.DiGraph()
@@ -105,7 +100,7 @@ def find_paths(df, G, start_city, end_city):
                 paths.append(path)
     return paths
 
-# ---------- Render Map & Table ----------
+# ---------- Render Path ----------
 def render_path(path_ids, G, city_coords):
     m = folium.Map(location=[47, 24], zoom_start=5, tiles="CartoDB positron")
     rows = []
@@ -120,24 +115,24 @@ def render_path(path_ids, G, city_coords):
     for idx, node in enumerate(nodes):
         dep_city = node['departure_city']
         arr_city = node['arrival_city']
-        dep_coords = city_coords.get(dep_city)
-        arr_coords = city_coords.get(arr_city)
+        dep_coords = city_coords.get(dep_city, (None, None))
+        arr_coords = city_coords.get(arr_city, (None, None))
 
-        if dep_coords:
+        if is_valid_coords(dep_coords):
             folium.Marker(
-                dep_coords,
+                location=dep_coords,
                 tooltip=f"From: {dep_city}",
                 icon=folium.Icon(color='blue', icon='plane-departure', prefix='fa')
             ).add_to(m)
 
-        if arr_coords:
+        if is_valid_coords(arr_coords):
             folium.Marker(
-                arr_coords,
+                location=arr_coords,
                 tooltip=f"To: {arr_city}",
                 icon=folium.Icon(color='green', icon='plane-arrival', prefix='fa')
             ).add_to(m)
 
-        if dep_coords and arr_coords:
+        if is_valid_coords(dep_coords) and is_valid_coords(arr_coords):
             PolyLine(
                 [dep_coords, arr_coords],
                 color="blue", weight=3, opacity=0.8,
@@ -182,11 +177,9 @@ paths = find_paths(df, G, start_city, end_city)
 if not paths:
     st.warning("No valid paths found for selected cities and transfer window.")
 else:
-    # Initialize index in session state
     if 'path_index' not in st.session_state:
         st.session_state.path_index = 0
 
-    # Handle button clicks
     col1, col2, col3 = st.columns([1, 2, 1])
     with col1:
         if st.button("◀️ Prev"):
